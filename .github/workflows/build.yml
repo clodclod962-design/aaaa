@@ -22,29 +22,11 @@ jobs:
         with:
           gradle-version: "8.5"
 
-      - name: Locate and Build Mod
-        run: |
-          # Ищем, в какой папке лежит build.gradle
-          GRADLE_DIR=$(find . -name "build.gradle" -exec dirname {} \; | head -n 1)
-          
-          if [ -z "$GRADLE_DIR" ]; then
-            echo "КРИТИЧЕСКАЯ ОШИБКА: Файл build.gradle не найден вообще нигде в репозитории!"
-            exit 1
-          fi
-          
-          echo "Проект найден в папке: $GRADLE_DIR"
-          cd "$GRADLE_DIR"
-          
-          # Запускаем сборку
-          if [ -f gradlew ]; then
-            chmod +x gradlew
-            ./gradlew build
-          else
-            gradle build
-          fi
+      - name: Build Mod
+        run: gradle build
 
       - name: Upload Mod Artifact
         uses: actions/upload-artifact@v4
         with:
           name: mymod-jar
-          path: "**/build/libs/*.jar"
+          path: build/libs/*.jar
