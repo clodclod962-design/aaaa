@@ -1,3 +1,4 @@
+
 name: build
 
 on:
@@ -7,26 +8,139 @@ on:
 jobs:
   build:
     runs-on: ubuntu-22.04
+
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Java
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
-          java-version: 17
+          java-version: '17'
           distribution: temurin
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
         with:
-          gradle-version: "8.5"
+          gradle-version: '8.5'
 
-      - name: Build Mod
-        run: gradle build
+      - name: Locate or Create Gradle Project
+        shell: bash
+        run: |
+          set -e
+
+          echo "Searching for Gradle project..."
+
+          GRADLE_FILE=$(find . -type f \( -name "build.gradle" -o -name "build.gradle.kts" \) \
+            -not -path "*/.gradle/*" | head -n 1)
+
+          if [ -n "$GRADLE_FILE" ]; then
+            PROJECT_DIR=$(dirname "$GRADLE_FILE")
+            echo "Found Gradle project: $PROJECT_DIR"
+          else
+            SOURCE_FILE=$(find . -type f -path "*/src/main/java/my/mod/MyMod.java" | head -n 1)
+
+            if [ -z "$SOURCE_FILE" ]; then
+              echo "ERROR: Cannot find build.gradle or MyMod.java!"
+              echo "Check that the source files are uploaded to GitHub."
+              exit 1
+            fi
+
+            PROJECT_DIR="${SOURCE_FILE%/src/main/java/my/mod/MyMod.java}"
+
+            echo "Creating Fabric Gradle project in: $PROJECT_DIR"
+
+            mkdir -p "$PROJECT_DIR"
+
+            cat > "$PROJECT_DIR/settings.gradle" <<'EOF'
+          pluginManagement {
+              repositories {
+                  maven { url = 'https://maven.fabricmc.net/' }
+                  gradlePluginPortal()
+                  mavenCentral()
+              }
+          }
+
+          rootProject.name = 'mymod'
+          EOF
+
+            cat > "$PROJECT_DIR/build.gradle" <<'EOF'
+          plugins {
+              id 'fabric-loom' version '1.6.12'
+          }
+
+          version = project.mod_version
+          group = project.maven_group
+
+          base {
+              archivesName = project.archives_base_name
+          }
+
+          repositories {
+              mavenCentral()
+          }
+
+          dependencies {
+              minecraft "com.mojang:minecraft:${project.minecraft_version}"
+              mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
+              modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+              modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+          }
+
+          processResources {
+              inputs.property "version", project.version
+
+              filesMatching("fabric.mod.json") {
+                  expand "version": project.version
+              }
+          }
+
+          java {
+              toolchain {
+                  languageVersion = JavaLanguageVersion.of(17)
+              }
+              withSourcesJar()
+          }
+          EOF
+
+            cat > "$PROJECT_DIR/gradle.properties" <<'EOF'
+          org.gradle.jvmargs=-Xmx3G
+          org.gradle.parallel=true
+
+          minecraft_version=1.20.1
+          yarn_mappings=1.20.1+build.10
+          loader_version=0.15.11
+          fabric_version=0.92.2+1.20.1
+
+          mod_version=1.0.0
+          maven_group=my.mod
+          archives_base_name=mymod
+          EOF
+          fi
+
+          if [ ! -f "$PROJECT_DIR/settings.gradle" ] && [ ! -f "$PROJECT_DIR/settings.gradle.kts" ]; then
+            echo "rootProject.name = 'mymod'" > "$PROJECT_DIR/settings.gradle"
+          fi
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+      - name: Build Fabric Mod
+        shell: bash
+        run: |
+          set -e
+          cd "$PROJECT_DIR"
+
+          echo "Building project in: $(pwd)"
+
+          gradle clean build --stacktrace
+
+          echo "Build completed!"
+
+          find build/libs -maxdepth 1 -name "*.jar" -type f
 
       - name: Upload Mod Artifact
         uses: actions/upload-artifact@v4
         with:
           name: mymod-jar
-          path: build/libs/*.jar
+          path: "**/build/libs/*.jar"
+          if-no-files-found: error
